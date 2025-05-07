@@ -4,14 +4,11 @@ import wandb
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizer
 from collections import defaultdict
-from hf_generate_text import hf_generate_text
-
-from helpers import (
-    QueueDataset,
-    get_new_branches,
-)
 from dataclasses import dataclass
 import itertools
+
+from branch_reasoning.generation.text_generation import hf_generate_text
+from branch_reasoning.generation.branching import QueueDataset, get_new_branches
 
 
 @dataclass
@@ -369,35 +366,3 @@ if __name__ == "__main__":
         branching_factor=branching_factor,
         max_branching_points=max_branching_points,
     )
-    (
-        all_completions,
-        all_numbers,
-        all_targets,
-        all_tags,
-        all_masks,
-        branch_ratio,
-        wandb_logs,
-    ) = results
-
-    print(
-        f"Generated {len(all_completions)} completions with branch ratio {branch_ratio:.2f}"
-    )
-    print("Sample completions:")
-    for k, v in list(all_completions.items())[:3]:
-        print(f"Key: {k}")
-        print(f"Completion: {v}")
-        print(
-            f"Numbers: {all_numbers.get(k.split('_')[0] + '#' + k.split('#')[1], 'N/A')}"
-        )
-        print(
-            f"Target: {all_targets.get(k.split('_')[0] + '#' + k.split('#')[1], 'N/A')}"
-        )
-        print(f"Tag: {all_tags.get(k.split('_')[0] + '#' + k.split('#')[1], 'N/A')}")
-        print("-" * 40)
-
-    # Optional: Save results to file
-    if len(all_completions) > 0:
-        print("You can save these completions to a file if needed")
-        # import json
-        # with open('completions_output.json', 'w') as f:
-        #     json.dump({k: tokenizer.decode(v, skip_special_tokens=True) for k, v in all_completions.items()}, f)

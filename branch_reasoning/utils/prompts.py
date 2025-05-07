@@ -1,5 +1,4 @@
 
-
 base_prompt = """Using a list of numbers, find a mathematical expression that equals the target.
 You can use addition (+), subtraction (-) and multiplication (*). Do not use division (/).
 You must use each number at most once, and you don't have to use all numbers.

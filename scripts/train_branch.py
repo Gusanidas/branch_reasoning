@@ -4,20 +4,20 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import wandb
 from collections import defaultdict
-from datasets import concatenate_datasets
-from countdown_task import transform_countdown_data, apply_r1_template
-from prompts import (
+from datasets import concatenate_datasets, load_dataset
+from itertools import cycle
+
+from branch_reasoning.utils.countdown_task import transform_countdown_data, apply_r1_template
+from branch_reasoning.utils.prompts import (
     base_prompt,
     single_branch_examples,
     multi_branch_examples,
     single_branch_format_prompt,
     multi_branch_format_prompt,
 )
-from utils import linear_warmup_decay
-from get_models_and_tokenizers import get_models_and_tokenizers
-from datasets import load_dataset
-from generate_completions import generate_completions
-from itertools import cycle
+from branch_reasoning.utils.utils import linear_warmup_decay
+from branch_reasoning.models.model_loader import get_models_and_tokenizers
+from branch_reasoning.generation.completions import generate_completions
 
 model_name = "gpt2"
 model_name = "Qwen/Qwen2.5-Coder-0.5B-Instruct"

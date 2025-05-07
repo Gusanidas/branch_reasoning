@@ -6,8 +6,8 @@ import pandas as pd
 import random
 import operator
 from itertools import combinations, permutations, combinations_with_replacement
-from utils import evaluate_expression
-from prompts import base_prompt, single_branch_format_prompt, single_branch_examples, multi_branch_format_prompt, multi_branch_examples
+from branch_reasoning.utils.utils import evaluate_expression
+from branch_reasoning.utils.prompts import base_prompt, single_branch_format_prompt, single_branch_examples, multi_branch_format_prompt, multi_branch_examples
 
 def apply_r1_template(question: str):
     return (

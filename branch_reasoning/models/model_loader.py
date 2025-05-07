@@ -23,4 +23,3 @@ def get_models_and_tokenizers(model_name, reference_model_name, tokenizer_name, 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     return model, reference_model, tokenizer
-            
