@@ -11,16 +11,18 @@ def hf_generate_text(
     max_seq_len: int,
     device: str = "cuda",
     generation_args: dict = {},
+    temperature: float = 1.0,
 ) -> List[str]:
+    print(f"Inside hf_generate_text")
     if device is not None:
         model = model.to(device)
+    print(f"Model moved to device: {device}")
     
     generation_params = {
         "num_return_sequences": num_completions,
         "do_sample": True,
     }
-    if "temperature" in generation_args:
-        generation_params["temperature"] = generation_args["temperature"]
+    generation_params["temperature"] = temperature
     if "top_k" in generation_args:
         generation_params["top_k"] = generation_args["top_k"]
     if "top_p" in generation_args:
@@ -32,18 +34,13 @@ def hf_generate_text(
         "text-generation",
         model=model,
         tokenizer=tokenizer,
-        device=0 if device == "cuda" else -1 if device == "cpu" else device,
+        #device=0 if device == "cuda" else -1 if device == "cpu" else device,
+    )
+    generated_texts = text_generator(
+        prompts,
+        max_length=max_seq_len,
+        **generation_params
     )
     
-    all_generated_texts = []
-    for prompt in prompts:
-        pipeline_outputs = text_generator(
-            prompt,
-            max_length=max_seq_len,
-            **generation_params
-        )
-        
-        generated_texts = [output['generated_text'] for output in pipeline_outputs]
-        all_generated_texts.extend(generated_texts)
-    
-    return all_generated_texts
+    # Extract just the generated text from each result
+    return [result['generated_text'] for prompt_results in generated_texts for result in prompt_results]

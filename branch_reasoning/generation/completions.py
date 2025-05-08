@@ -131,9 +131,8 @@ def _log_statistics(
     all_completions: Dict[str, str],
     original_no_branches: int,
     current_iter: int,
-    branch_ratio: float,
     example_completion_html: wandb.Html,
-    example_completion_text: wandb.Html,
+    example_completion_text: wandb.Html = None, #TODO: Remove this
 ) -> None:
     branch_ratio = len(all_completions) / original_no_branches
     keys, completions = zip(*all_completions.items())
@@ -150,7 +149,6 @@ def _log_statistics(
             "branch_ratio": branch_ratio,
             "total_completions": total_completions_count,
             "example_completion_html": example_completion_html,
-            "example_completion_text": example_completion_text,
         },
         step=current_iter,
     )
@@ -212,6 +210,7 @@ def generate_completions(
     branching_factor: int = 2,
     max_branching_points: int = 3,
     generation_args: dict = {},
+    temperature: float = 1.0,
 ) -> List[PromptCompletion]:
     """
     Generate completions for the given dataset.
@@ -225,7 +224,7 @@ def generate_completions(
     ) = _calculate_batch_parameters(
         completions_per_prompt, gen_batch_size, total_completions
     )
-
+    print(f"Generation iter: {generation_iter}")
     all_completions = {}
     all_prompts = {}
     all_numbers = {}
@@ -248,16 +247,13 @@ def generate_completions(
                 max_seq_len=max_len,
                 device=device,
                 generation_args=generation_args,
+                temperature=temperature,
             )
-
+            print(f"length of completions: {len(completions)}, len of prompts: {len(prompts)}")
             if wandb_logging and j == 0:  # TODO: Remove one of the two.
-                decoded_completion = tokenizer.decode(
-                    completions[0], skip_special_tokens=True
-                )
                 example_completion_html = wandb.Html(
-                    f"<pre>{html.escape(decoded_completion)}</pre>"
+                    f"<pre>{html.escape(completions[0])}</pre>"
                 )
-                example_completion_text = wandb.Html(f"```\n{decoded_completion}\n```")
 
             for k in range(prompts_per_batch):
                 total_keys += 1
@@ -274,7 +270,7 @@ def generate_completions(
                     all_completions[completion_key] = completions[
                         k * num_completions + kk
                     ]
-
+            print(f"Completions added to all_completions")
     original_no_branches = len(all_completions)
     if branch_completions:
         all_completions = _perform_branching(
@@ -294,9 +290,7 @@ def generate_completions(
             all_completions,
             original_no_branches,
             current_iter,
-            branch_ratio,
             example_completion_html,
-            example_completion_text,
         )
 
     # Pack into the return datatypes

@@ -38,11 +38,26 @@ pytest tests/test_branching.py
 
 ### Training
 
-To run the training script:
+To run the training script with HuggingFace (default):
 
 ```bash
-python scripts/train_branch.py
+python scripts/train_branch.py --model_name "Qwen/Qwen2.5-3B-Instruct" --device mps
 ```
+
+To run the training script with vLLM (requires CUDA and vLLM to be installed):
+
+```bash
+python scripts/train_branch.py --use_vllm --model_name "Qwen/Qwen2.5-3B-Instruct"
+```
+
+Available command-line options:
+
+- `--use_vllm`: Use vLLM for text generation instead of HuggingFace
+- `--model_name`: Model name or path (default: "Qwen/Qwen2.5-3B-Instruct")
+- `--tokenizer_name`: Tokenizer name or path (defaults to model_name)
+- `--device`: Device to use (cuda, cpu, mps) (default: "cuda")
+- `--iterations`: Number of training iterations (default: 10)
+- `--wandb_logging`: Enable wandb logging
 
 ### Creating and Pushing a Dataset
 

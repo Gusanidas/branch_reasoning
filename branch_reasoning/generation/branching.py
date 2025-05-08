@@ -59,7 +59,6 @@ def get_new_branches_for_point(text: str, branch_number: int, branching_factor: 
     """
     keyword_index = text.find(KEYWORD)
     if keyword_index == -1:
-        print(f"keyword not found in text:")
         return []
         
     keyword_regex = create_keyword_regex(branching_factor)
@@ -67,7 +66,6 @@ def get_new_branches_for_point(text: str, branch_number: int, branching_factor: 
     search_start_pos = keyword_index + len(KEYWORD)
     keyword_matches = list(keyword_regex.finditer(text, pos=search_start_pos))
     if branch_number <= 0 or branch_number > len(keyword_matches):
-        print(f"branch_number out of range: {branch_number}")
         return []
     
     keyword_match = keyword_matches[branch_number - 1]
@@ -120,7 +118,6 @@ def get_new_branches(all_completions: Dict[str, str], branching_factor: int = 2,
                 new_key = f"{base_key}_{iter_num}_{'_'.join(branches_copy)}"
                 
                 new_branches_for_point = get_new_branches_for_point(completion, i + 1, branching_factor)
-                print(f"len new_branches_for_point: {len(new_branches_for_point)}")
                 
                 for j, new_branch in enumerate(new_branches_for_point):
                     branches_copy[i] = str(j+1)

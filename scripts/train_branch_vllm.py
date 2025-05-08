@@ -190,7 +190,7 @@ async def train_branch(
         print(f"reference_model: {reference_model}")
         
         # Create optimizer and scheduler outside the loop
-        learning_rate = training_args.get("learning_rate", 5e-5) if training_args is not None else 5e-5
+        learning_rate = training_args.get("learning_rate", 5e-6) if training_args is not None else 5e-6
         weight_decay = training_args.get("weight_decay", 0.01) if training_args is not None else 0.01
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         
@@ -256,6 +256,7 @@ async def train_branch(
         t2, t3 = t0, t0
 
         for i in range(iterations):
+            time.sleep(20)
             try:
                 wandb_logs = defaultdict(float)
                 print(f"=== Starting iteration {i+1}/{iterations} ===, time: {time.time() - t0:.2f}s")
@@ -473,8 +474,11 @@ async def train_branch(
                                 
                                 # Save the model to the checkpoints directory
                                 temp_model.save_pretrained("./checkpoints")
-                                print(f"Model weights saved successfully to ./checkpoints")
-                                
+
+                                # Also save the tokenizer to the same directory
+                                tokenizer.save_pretrained("./checkpoints")
+                                print(f"Model weights and tokenizer saved successfully to ./checkpoints")
+
                                 # Free up memory
                                 del temp_model
                                 torch.cuda.empty_cache()
@@ -573,17 +577,17 @@ async def main():
         "top_k": 50,
     }
 
-    use_vllm = False
+    use_vllm = True
     model_name = "Qwen/Qwen2.5-3B-Instruct"
-    #model_name = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+    model_name = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
     tokenizer_name = None
     device = "cuda"
     wandb_logging = True
     branch_completions = False
     use_bfloat16 = True
 
-    wandb_project_name = "branch_grpo_vast_branch_1"
-    run_name = "run_38"
+    wandb_project_name = "branch_grpo_vast_branch_vllm"
+    run_name = "run_23"
     
     training_args = {
         "num_epochs": 2,
@@ -644,7 +648,7 @@ async def main():
         run_name=run_name,
         training_args=training_args,
         temperature=temperature,
-        vllm_server_args=vllm_server_args,
+        #vllm_server_args=vllm_server_args,
     )
     
     # Calculate and print the total execution time
