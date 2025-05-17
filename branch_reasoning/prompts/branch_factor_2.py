@@ -1,68 +1,29 @@
-
-base_prompt = """Using a list of numbers, find a mathematical expression that equals the target.
-You can use addition (+), subtraction (-) and multiplication (*). Do not use division (/).
-You must use each number at most once, and you don't have to use all numbers.
-The numbers cannot be concatenated (e.g., you cannot use 9 and 5 to make 95).
-Write just the left side of the expression.
-{format_prompt}
-
-Think about the solution and write it step by step.
-{example}
-Task:
-
-Numbers: {nums}
-Target: {target}
-"""
-
-
-single_branch_format_prompt = """
+multi_branch_format_prompt= """
 Place your reasoning between <think> and </think> tags.
 Place your solution between <answer> and </answer> tags.
 Dont write anything after </answer>.
-"""
 
-
-multi_branch_format_prompt= """
 You can branch your reasoning. Describe briefly two different approaches.
-Choose one of them by writing #a# or #b#. Describe both branches before choosing.
-After branching, continue the reasoning of the branch you chose.
-You can branch up to three times.
+And follow that reasoning path, another instance will follow the other path.
+In between <think> and </think>, write one branch between <a> and </a>, and the other between <b> and </b>.
+Choose one of them by writing #a# or #b#.
+So, for example:
+<a>
+Short description of the branch.
+</a>
+<b>
+Short description of the branch.
+</b>
+#a#
+
+After branching, continue the reasoning only of the branch you chose.
+If the branch leads to no solution, write:
+<answer></answer>
+You can branch up to {max_branching_points} times.
 """
 
-# Examples
-# Single branch
 
-single_branch_example_1 = """
-Numbers: 3, 5, 7
-Target: 22
-<think>
-I will try to multiply 5 and 7, that is 5 * 7 = 35. Minus 3 that is 32, which is too much.
-I can try adding all the numbers. 3 + 5 + 7 = 15, it is too low.
-I can multiply 3 and 5, that is 3 * 5 = 15. I can add 7, that is 15 + 7 = 22.
-That is the solution.
-</think>
-
-I have found the solution: 3*5 + 7 = 22.
-<answer>3 * 5 + 7</answer>"""
-
-single_branch_example_2 = """
-Numbers: 4, 5, 9
-Target: 20
-<think>
-First, I'll try adding all numbers together: 4 + 5 + 9 = 18. This is close but still 2 less than our target.
-I could try multiplication. 4 * 5 = 20, which is exactly our target! Great, I found a solution.
-Let me check if there are other solutions.
-I could try 5 * 9 = 45, and then subtract 4: 45 - 4 = 41. That's too large.
-Another option would be 4 * 9 = 36, and then subtract 5: 36 - 5 = 31. Also too large.
-So the best solution is 4 * 5 = 20.
-</think>
-I have found the solution: 4 * 5 = 20.
-<answer>4 * 5</answer>
-"""
-
-# Multi branch
-
-multi_branch_example_1 = """
+example_1 = ("""
 Numbers: 3, 5, 7, 2
 Target: 67
 <think>
@@ -81,9 +42,9 @@ That is the solution.
 
 I have found the solution: 7*5*2 - 3 = 67.
 <answer>7*5*2 - 3</answer>
-"""
+""", 1)
 
-multi_branch_example_2 = """
+example_2 = ("""
 Numbers: 9, 8, 7, 2
 Target: 33
 <think>
@@ -103,9 +64,9 @@ That is exactly our target!
 </think>
 I have found the solution: 9 * 2 + 7 + 8 = 33.
 <answer>9 * 2 + 7 + 8</answer>
-"""
+""", 1)
 
-multi_branch_example_3 = """
+example_3 = ("""
 Numbers: 7, 12, 2, 20, 5
 Target: 124
 <think>
@@ -134,9 +95,9 @@ This is the solution.
 </think>
 I have found the solution: 7 * 12 + 2 * 20 = 124.
 <answer>7 * 12 + 2 * 20</answer>
-"""
+""", 2)
 
-multi_branch_example_4 = """
+example_4 = ("""
 Numbers: 7, 12, 2, 20, 5
 Target: 124
 <think>
@@ -162,9 +123,9 @@ I will try adding 2 * 20 = 40 to our current value of 84.
 </b>
 #b#
 I have found the solution: 7 * 12 + 2 * 20 = 124.</think>
-<answer>7 * 12 + 2 * 20</answer>"""
+<answer>7 * 12 + 2 * 20</answer>""", 2)
 
-multi_branch_example_5 = """
+example_5 = ("""
 Numbers: 7, 12, 2, 20, 5, 9
 Target: 169
 <think>
@@ -192,9 +153,9 @@ I will try adding 2 * 20 = 40 to our current value of 84.
 From here, if I can add 9*5, that is 45, I will reach 169.
 </think>
 I have found the solution: 7 * 12 + 2 * 20 + 9 * 5 = 169.
-<answer>7 * 12 + 2 * 20 + 9 * 5</answer>"""
+<answer>7 * 12 + 2 * 20 + 9 * 5</answer>""", 2)
 
-multi_branch_example_6 = """
+example_6 = ("""
 Numbers: 7, 12, 2, 20, 5, 9
 Target: 169
 <think>
@@ -233,10 +194,10 @@ With 124, I can add 45, that is 124 + 45 = 169.
 That is exactly our target!
 </think>
 I have found the solution: 7 * 12 + 2 * 20 + 9 * 5 = 169.
-<answer>7 * 12 + 2 * 20 + 9 * 5</answer>"""
+<answer>7 * 12 + 2 * 20 + 9 * 5</answer>""",3)
 
 
-multi_branch_example_7 = """
+example_7 = ("""
 Numbers: 3, 5, 7, 2
 Target: 67
 <think>
@@ -247,78 +208,65 @@ Then I can subtract 3, that is 70 - 3 = 67.
 </think>
 
 <answer>7*5*2 - 3</answer>
-"""
-multi_branch_example_8 = """
-Numbers: 3, 5, 7, 2
-Target: 67
-<think>
-A: 7*3
-B: 7*5
-#b#
-With 7*5, I can multiply by 2, that is 35 * 2 = 70.
-Then I can subtract 3, that is 70 - 3 = 67.
-</think>
+""", 1)
 
-<answer>7*5*2 - 3</answer>
-"""
-multi_branch_example_9 = """
+example_8 = ("""
 Numbers: 7, 12, 2, 20, 5, 9
 Target: 169
 <think>
-A: 7*20
-B: 7*12
+Branching out.
+<a>7*20</a> <b>7*12</b>
 #b#
-With 7 * 12 = 84.
-I have 2, 20, and 5 remaining.
-A: 84 -2
-B: 84 + 40
+40 left to reach 169.
+2, 20, and 5 remaining.
+<a>
+84 - 2 = 82.
+</a>
+<b>
+84 + 40 = 124.
+</b>
 #b#
-A: 9 * 5
-B: 9 + 5
+I have 7*12 + 2*20 = 124. And I have 5 and 9 remaining.
+<a>5*9 = 45</a> <b>5+9 = 14</b>
 #a#
-45 + 124 = 169.
+With 124, I can add 45, that is 124 + 45 = 169.
+That is exactly our target!
 </think>
 I have found the solution: 7 * 12 + 2 * 20 + 9 * 5 = 169.
-<answer>7 * 12 + 2 * 20 + 9 * 5</answer>"""
+<answer>7 * 12 + 2 * 20 + 9 * 5</answer>""",3)
 
-multi_branch_example_10 = """
-Numbers: 7, 12, 2, 20, 5, 9
-Target: 169
+no_branches_example_1 = ("""
+Numbers: 3, 5, 7
+Target: 22
 <think>
-A: 7*12
-B: 7*20
-#a#
-With 7 * 12 = 84.
-I have 2, 20, and 5 remaining.
-A: 84 *5
-B: 84 + 40
-124, left 9 and 5.
-#b#
-A: 9 * 5 + 124
-B: 9 + 5 + 124
-#a#
-45 + 124 = 169.
+I will try to multiply 5 and 7, that is 5 * 7 = 35. Minus 3 that is 32, which is too much.
 </think>
-I have found the solution: 7 * 12 + 2 * 20 + 9 * 5 = 169.
-<answer>7 * 12 + 2 * 20 + 9 * 5</answer>"""
+I can try adding all the numbers. 3 + 5 + 7 = 15, it is too low.
+I can multiply 3 and 5, that is 3 * 5 = 15. I can add 7, that is 15 + 7 = 22.
+That is the solution.
+</think>
 
-multi_branch_example_10 = """
-Numbers: 7, 12, 2, 20, 5, 9
-Target: 169
+I have found the solution: 3*5 + 7 = 22.
+<answer>3 * 5 + 7</answer>""", 0)
+
+no_branches_example_2 = ("""
+Numbers: 4, 5, 9
+Target: 20
 <think>
-<a>7*12</a> <b>7*20</b>
-#a#
-With 7 * 12 = 84.
-I have 2, 20, and 5 remaining.
-<a>84 *5</a> <b>84 + 40</b>
-124, left 9 and 5.
-#b#
-<a>9 * 5 + 124</a> <b>9 + 5 + 124</b>
-#a#
-45 + 124 = 169.
+First, I'll try adding all numbers together: 4 + 5 + 9 = 18. This is close but still 2 less than our target.
+I could try multiplication. 4 * 5 = 20, which is exactly our target! Great, I found a solution.
+Let me check if there are other solutions.
+I could try 5 * 9 = 45, and then subtract 4: 45 - 4 = 41. That's too large.
+Another option would be 4 * 9 = 36, and then subtract 5: 36 - 5 = 31. Also too large.
+So the best solution is 4 * 5 = 20.
 </think>
-I have found the solution: 7 * 12 + 2 * 20 + 9 * 5 = 169.
-<answer>7 * 12 + 2 * 20 + 9 * 5</answer>"""
+I have found the solution: 4 * 5 = 20.
+<answer>4 * 5</answer>""", 0)
 
-single_branch_examples = [single_branch_example_1, single_branch_example_2]
-multi_branch_examples = [multi_branch_example_1, multi_branch_example_2, multi_branch_example_3, multi_branch_example_4, multi_branch_example_5, multi_branch_example_6, multi_branch_example_7, multi_branch_example_8, multi_branch_example_9, multi_branch_example_10]
+
+examples = [example_1, example_2, example_3, example_4, example_5, example_6, example_7, example_8, no_branches_example_1, no_branches_example_2]
+double_examples = [(e1 + "\nExample:\n" + e2, max(m1, m2)) for e1, m1 in examples for e2, m2 in examples]
+examples = examples + double_examples
+def get_format_and_examples(max_branching_points):
+    filtered_examples = [example for example, branching_points in examples if branching_points <= max_branching_points]
+    return multi_branch_format_prompt.format(max_branching_points=max_branching_points), filtered_examples

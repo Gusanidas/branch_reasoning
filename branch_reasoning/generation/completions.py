@@ -41,17 +41,29 @@ class PromptCompletion:
     scoring_data: ScoringData
     metadata: Metadata
     branched_completions: List[BranchedCompletion]
+    bare_prompt: Optional[str] = None
 
 
 def _calculate_batch_parameters(
     completions_per_prompt: int, gen_batch_size: int, total_completions: int
 ) -> Tuple[int, int, int, int]:
+
+    if completions_per_prompt % gen_batch_size != 0 and gen_batch_size % completions_per_prompt != 0:
+        raise ValueError(
+            "completions_per_prompt must be divisible by gen_batch_size or gen_batch_size must be divisible by completions_per_prompt"
+        )
+
     if completions_per_prompt > gen_batch_size:
         prompt_repetitions = completions_per_prompt // gen_batch_size
         prompts_per_batch = 1
     else:
         prompt_repetitions = 1
         prompts_per_batch = gen_batch_size // completions_per_prompt
+
+    if total_completions % (gen_batch_size * prompt_repetitions) != 0:
+        raise ValueError(
+            "total_completions must be divisible by gen_batch_size * prompt_repetitions"
+        )
 
     generation_iter = total_completions // (gen_batch_size * prompt_repetitions)
     num_completions = min(completions_per_prompt, gen_batch_size)
@@ -67,6 +79,7 @@ def _fetch_batch(
     targets = []
     tags = []
     solutions = []
+    bare_prompts = []
     for _ in range(prompts_per_batch):
         item = next(dataset)
         prompts.append(item["question"])
@@ -74,7 +87,8 @@ def _fetch_batch(
         targets.append(item["target"])
         tags.append(item["tag"])
         solutions.append(item["solution"])
-    return prompts, numbers, targets, tags, solutions
+        bare_prompts.append(item.get("bare_question", None))
+    return prompts, numbers, targets, tags, solutions, bare_prompts
 
 
 def _perform_branching(
@@ -146,6 +160,7 @@ def _log_statistics(
     wandb.log(
         {
             "avg_completion_length": avg_completion_length,
+            "max_completion_length": max(len(c) for c in completions),
             "branch_ratio": branch_ratio,
             "total_completions": total_completions_count,
             "example_completion_html": example_completion_html,
@@ -161,6 +176,7 @@ def _pack_into_return_datatypes(
     all_targets: Dict[str, float],
     all_tags: Dict[str, str],
     all_solutions: Dict[str, str],
+    all_bare_prompts: Dict[str, str] = {},
 ) -> List[PromptCompletion]:
     branched_completions = dict()
     for k, v in all_completions.items():
@@ -177,6 +193,7 @@ def _pack_into_return_datatypes(
         base_key, completion_key, *_ = k.split("_")
         gen_key = base_key + "_" + completion_key
         prompt = all_prompts[base_key]
+        bare_prompt = all_bare_prompts.get(base_key, None)
         numbers = all_numbers[base_key]
         target = all_targets[base_key]
         solution = all_solutions[base_key]
@@ -185,6 +202,7 @@ def _pack_into_return_datatypes(
             base_key,
             PromptCompletion(
                 prompt=prompt,
+                bare_prompt=bare_prompt,
                 scoring_data=ScoringData(nums=numbers, target=target),
                 metadata=Metadata(solution=solution, tag=tag),
                 branched_completions=[],
@@ -227,6 +245,7 @@ def generate_completions(
     print(f"Generation iter: {generation_iter}")
     all_completions = {}
     all_prompts = {}
+    all_bare_prompts = {}
     all_numbers = {}
     all_targets = {}
     all_tags = {}
@@ -235,7 +254,7 @@ def generate_completions(
     total_keys = 0
 
     for i in range(generation_iter):
-        prompts, numbers, targets, tags, solutions = _fetch_batch(
+        prompts, numbers, targets, tags, solutions, bare_prompts = _fetch_batch(
             dataset, prompts_per_batch
         )
         for j in range(prompt_repetitions):
@@ -252,13 +271,14 @@ def generate_completions(
             print(f"length of completions: {len(completions)}, len of prompts: {len(prompts)}")
             if wandb_logging and j == 0:  # TODO: Remove one of the two.
                 example_completion_html = wandb.Html(
-                    f"<pre>{html.escape(completions[0])}</pre>"
+                    f"<pre>{html.escape(prompts[0] + completions[0])}</pre>"
                 )
 
             for k in range(prompts_per_batch):
                 total_keys += 1
                 base_key = f"{total_keys}#{current_iter}"
                 all_prompts[base_key] = prompts[k]
+                all_bare_prompts[base_key] = bare_prompts[k]
                 all_numbers[base_key] = numbers[k]
                 all_targets[base_key] = targets[k]
                 all_tags[base_key] = tags[k]
@@ -301,6 +321,7 @@ def generate_completions(
         all_targets,
         all_tags,
         all_solutions,
+        all_bare_prompts,
     )
 
 

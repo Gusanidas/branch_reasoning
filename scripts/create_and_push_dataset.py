@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from branch_reasoning.utils.countdown_task import make_combined_countdown_tasks
+from branch_reasoning.countdown_task import make_combined_countdown_tasks
 from datasets import load_dataset, concatenate_datasets
 import argparse
 

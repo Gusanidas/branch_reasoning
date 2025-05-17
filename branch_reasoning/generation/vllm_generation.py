@@ -10,7 +10,7 @@ import sys
 import re
 import torch
 from typing import Any, IO, Optional, List, Dict, Union, Callable
-
+from transformers import PreTrainedTokenizer
 @dataclass
 class vLLM:
     client: AsyncOpenAI
@@ -203,11 +203,13 @@ async def start_vllm(
 
 async def vllm_generate_text(
     vllm_instance: vLLM,
+    tokenizer: PreTrainedTokenizer,
     prompts: List[str],
     num_completions: int = 1,
     max_seq_len: int = 2048,
     generation_args: Dict[str, Any] = {},
     temperature: float = 1.0,
+    extra_parameters: Optional[Dict[str, Any]] = {},
 ) -> List[str]:
     """
     Generate text using vLLM, similar to the HuggingFace generate_text function.
@@ -237,19 +239,29 @@ async def vllm_generate_text(
     
     # For OpenAI API compatibility
     generation_params["n"] = num_completions
+    # Add all generation_args to generation_params
+    for key, value in generation_args.items():
+        if key != "max_new_tokens":  # Already handled above
+            generation_params[key] = value
     
     # Create a semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(min(16, len(prompts)))
     
     async def generate_completion(prompt: str) -> List[str]:
+        token_length = tokenizer(prompt, return_tensors="pt").input_ids.shape[1]
+        if token_length > max_seq_len-10:
+            print(f"Token length {token_length} is greater than max_seq_len {max_seq_len}")
+            return [""]
+        generation_params["max_tokens"] = max_seq_len-token_length
         async with semaphore:
             try:
                 response = await vllm_instance.client.completions.create(
                     model=vllm_instance.model,
                     prompt=prompt,
+                    extra_body=extra_parameters,
                     **generation_params
                 )
-                return [(choice.text, prompt) for choice in response.choices]
+                return [choice.text for choice in response.choices]
             except Exception as e:
                 print(f"Error generating completion: {e}")
                 if "top_k" in str(e) and "top_k" in generation_args:
@@ -262,9 +274,10 @@ async def vllm_generate_text(
                     response = await vllm_instance.client.completions.create(
                         model=vllm_instance.model,
                         prompt=prompt,
+                        extra_body=extra_parameters,
                         **retry_params
                     )
-                    return [(choice.text, prompt) for choice in response.choices]
+                    return [choice.text for choice in response.choices]
                 raise
     
     # Gather all completion tasks
@@ -272,18 +285,23 @@ async def vllm_generate_text(
     tasks = [generate_completion(prompt) for prompt in prompts]
     
     for completed_task in await asyncio.gather(*tasks):
-        all_generated_texts.extend([prompt + completion for completion, prompt in completed_task])
+        all_generated_texts.extend(completed_task)
     
     return all_generated_texts
 
 
 async def vllm_chat_generate_text(
     vllm_instance: vLLM,
+    tokenizer: PreTrainedTokenizer,
     prompts: List[str],
     num_completions: int = 1,
     max_seq_len: int = 2048,
     generation_args: Dict[str, Any] = {},
+    temperature: float = 1.0,
     system_message: str = "You are a helpful assistant.",
+    assistant_messages: List[str] = [],
+    extra_parameters: Optional[Dict[str, Any]] = {},
+    bare_prompts: Optional[List[str]] = [],
 ) -> List[str]:
     """
     Generate text using vLLM's chat completions API, which is more appropriate
@@ -302,12 +320,11 @@ async def vllm_chat_generate_text(
     """
     # Set up generation parameters
     generation_params = {
-        "max_tokens": generation_args.get("max_new_tokens", 512),
+        "max_tokens": generation_args.get("max_new_tokens", max_seq_len),
     }
     
     # Map parameters to OpenAI API format
-    if "temperature" in generation_args:
-        generation_params["temperature"] = generation_args["temperature"]
+    generation_params["temperature"] = temperature
     if "top_p" in generation_args:
         generation_params["top_p"] = generation_args["top_p"]
     
@@ -316,21 +333,40 @@ async def vllm_chat_generate_text(
     
     # For OpenAI API compatibility
     generation_params["n"] = num_completions
+    for key, value in generation_args.items():
+        if key != "max_new_tokens" and key != "temperature" and key != "top_p":  # Already handled above
+            generation_params[key] = value
     
     # Create a semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(min(16, len(prompts)))
     
-    async def generate_chat_completion(prompt: str) -> List[str]:
+    async def generate_chat_completion(prompt: str, assistant_messages: Optional[List[str]] = None) -> List[str]:
         async with semaphore:
             messages = [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt}
             ]
+            if assistant_messages:
+                messages.extend([{"role": "assistant", "content": message} for message in assistant_messages])
+
+            chat_text = tokenizer.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=True
+            )
+            token_length = len(tokenizer.encode(chat_text))
+            
+            if token_length > max_seq_len-10:
+                print(f"Token length {token_length} is greater than max_seq_len {max_seq_len}")
+                return [""]
+            generation_params["max_tokens"] = max_seq_len-token_length
+
             
             try:
                 response = await vllm_instance.client.chat.completions.create(
                     model=vllm_instance.model,
                     messages=messages,
+                    extra_body=extra_parameters,
                     **generation_params
                 )
                 return [choice.message.content for choice in response.choices]
@@ -346,6 +382,7 @@ async def vllm_chat_generate_text(
                     response = await vllm_instance.client.chat.completions.create(
                         model=vllm_instance.model,
                         messages=messages,
+                        extra_body=extra_parameters,
                         **retry_params
                     )
                     return [choice.message.content for choice in response.choices]
@@ -353,7 +390,11 @@ async def vllm_chat_generate_text(
     
     # Gather all completion tasks
     all_generated_texts = []
-    tasks = [generate_chat_completion(prompt) for prompt in prompts]
+    if len(assistant_messages) == 0:
+        assistant_messages = [None] * len(prompts)
+    if len(bare_prompts) == 0:
+        bare_prompts = [None] * len(prompts)
+    tasks = [generate_chat_completion(prompt, assistant_messages) for prompt, assistant_messages in zip(prompts, assistant_messages)]
     
     for completed_task in await asyncio.gather(*tasks):
         all_generated_texts.extend(completed_task)

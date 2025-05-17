@@ -1,30 +1,11 @@
-from typing import List, Optional, Callable
-import time
-import re
-from datasets import Dataset as HFDataset, concatenate_datasets
-import pandas as pd
-import random
+from typing import List, Optional
 import operator
+import time
+import random
 from itertools import combinations, permutations, combinations_with_replacement
+import pandas as pd
+from datasets import Dataset as HFDataset, concatenate_datasets
 from branch_reasoning.utils.utils import evaluate_expression
-from branch_reasoning.utils.prompts import base_prompt, single_branch_format_prompt, single_branch_examples, multi_branch_format_prompt, multi_branch_examples
-
-def apply_r1_template(question: str):
-    return (
-        "A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. "
-        "The reasoning process is enclosed within <think> </think> and answer is enclosed within <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>.\nUser: "
-        + question
-        + "\nAssistant: <think>"
-    )
-
-def apply_qwen_math_template(question: str):
-    return (
-        "<|im_start|>system\nPlease reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n<|im_start|>user\n"
-        + question
-        + "<|im_end|>\n<|im_start|>assistant\n"
-    )
-
-
 
 def find_solution(numbers: List[int], target: int) -> Optional[str]:
     """
@@ -228,77 +209,14 @@ def make_combined_countdown_tasks(
     print(f"Final combined dataset size: {len(combined_dataset)} examples.")
     return combined_dataset
 
-def transform_countdown_data(
-    input_dataset: HFDataset,
-    base_prompt_template: str,
-    template_func: Callable[[str], str] = apply_r1_template,
-    format_prompt: str = "",
-    examples: List[str] = [""], 
-) -> HFDataset:
-    """
-    Transforms a countdown dataset (with numbers, target, solution) into a
-    prompt-based format (with question, answer).
-
-    Applies a base prompt template and a template function to each example.
-
-    Args:
-        input_dataset: A Hugging Face dataset with columns 'numbers' (List[int]),
-                       'target' (int), 'solution' (str), and optionally 'tag' (str).
-        base_prompt_template: A format string for the question, expecting
-                              {nums} and {target} placeholders.
-                              Example: "Use the numbers {nums} to reach the target {target}."
-        template_func: A function that takes the formatted prompt string and
-                       applies a final template (e.g., adding user/assistant roles).
-                       Defaults to `apply_r1_template`.
-        examples: A list of examples to be used as examples in the prompt.
-
-    Returns:
-        Dataset: A Hugging Face dataset with columns 'question' (str),
-                 'numbers' (List[int]), 'target' (int), 'answer' (str),
-                 and 'tag' (str) if present in the input.
-    """
-    def _format_task(task):
-        """Internal function to format a single row."""
-        example = random.choice(examples)
-        try:
-            formatted_prompt = base_prompt_template.format(
-                nums=task['numbers'],
-                target=task['target'],
-                example = example, 
-                format_prompt = format_prompt,
-            )
-            question = template_func(formatted_prompt)
-            return {
-                'question': question,
-                'solution': task['solution']
-            }
-        except Exception as e:
-            print(f"Error formatting prompt for task {task}:\n {e}")
-            return {'question': '', 'answer': ''}
-
-    transformed_dataset = input_dataset.map(
-        _format_task,
-    )
-
-    expected_cols = {'question', 'numbers', 'target', 'solution'}
-    missing_cols = expected_cols - set(transformed_dataset.column_names)
-    if 'tag' in input_dataset.column_names:
-         expected_cols.add('tag')
-         
-    if missing_cols:
-        print(f"Warning: Missing expected columns in transformed dataset: {missing_cols}")
-
-    unexpected_cols = set(transformed_dataset.column_names) - expected_cols
-    if unexpected_cols:
-        print(f"Info: Found additional columns in transformed dataset: {unexpected_cols}")
-
-    print(f"Final dataset columns: {transformed_dataset.column_names}")
-
-    return transformed_dataset
 
 if __name__ == "__main__":
+    # Test code
+    from branch_reasoning.prompts.prompts import base_prompt
+    from branch_reasoning.countdown_task.templates import apply_r1_template, transform_countdown_data
+    
     print("Generating a small 'easy' dataset...")
-    small_dataset = make_combined_countdown_tasks(easy=5, shuffle_result=False) # Use make_combined_tasks
+    small_dataset = make_combined_countdown_tasks(easy=5, shuffle_result=False)
 
     print("\n--- Original Small Dataset ---")
     for i, example in enumerate(small_dataset):
@@ -310,9 +228,8 @@ if __name__ == "__main__":
     print("\nTransforming the dataset...")
     transformed_dataset = transform_countdown_data(
         input_dataset=small_dataset,
-        base_prompt_template=base_prompt, # Use the imported base_prompt
+        base_prompt_template=base_prompt,
         template_func=apply_r1_template,
-    
     )
 
     print("\n--- Transformed Dataset ---")
@@ -320,9 +237,9 @@ if __name__ == "__main__":
         print(f"Example {i+1}:")
         print(f"  Question: {example.get('question', 'N/A')}")
         print(f"  Solution: {example.get('solution', 'N/A')}")
-        print(f"  Original Numbers: {example.get('numbers', 'N/A')}") # Keep original info for context
-        print(f"  Original Target: {example.get('target', 'N/A')}")   # Keep original info for context
-        print(f"  Tag: {example.get('tag', 'N/A')}")               # Keep original info for context
+        print(f"  Original Numbers: {example.get('numbers', 'N/A')}")
+        print(f"  Original Target: {example.get('target', 'N/A')}")
+        print(f"  Tag: {example.get('tag', 'N/A')}")
         print("-" * 10)
 
     print("\nScript finished.")

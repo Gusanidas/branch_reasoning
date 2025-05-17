@@ -50,9 +50,15 @@ def _divide_branched_scores(
             total = 0
             for branch in branched_completion.branches:
                 total += branch.score 
-            ratio = total/branched_completion.score if branched_completion.score != 0 else 1
-            for branch in branched_completion.branches:
-                branch.score /= ratio * len(branched_completion.branches) if ratio != 0 else 1
+            if branched_completion.score != 0:  
+                ratio = total/branched_completion.score
+                for branch in branched_completion.branches:
+                    branch.score /= ratio * len(branched_completion.branches) if ratio != 0 else 1.0
+            else:
+                ratio = 1
+                for branch in branched_completion.branches:
+                    branch.score = 0.0
+            
 
 def _initialize_scores(
     prompt_completion_list: List[PromptCompletion],
@@ -78,6 +84,8 @@ def _gather_metrics(
         b_scores = []
         for branched_completion in prompt_completion.branched_completions:
             scores.append(branched_completion.score)
+            for branch in branched_completion.branches:
+                b_scores.append(branch.score)
         avg_score = sum(scores) / len(scores)
         max_score = max(scores)
         min_score = min(scores)
@@ -87,6 +95,7 @@ def _gather_metrics(
         if once:
             print(f"Once scores: {scores}")
             print(f"Once avg_score: {avg_score}, max_score: {max_score}, min_score: {min_score}, std_score: {std_score}")
+            print(f"Once b_scores: {b_scores}")
             once = False
         wandb_logs[f"post_score_{mark}/avg_score"] += avg_score
         wandb_logs[f"post_score_{mark}/max_score"] += max_score
@@ -96,8 +105,24 @@ def _gather_metrics(
         wandb_logs[f"post_score_{mark}/max_score_steps"] += 1
         wandb_logs[f"post_score_{mark}/min_score_steps"] += 1
         wandb_logs[f"post_score_{mark}/std_score_steps"] += 1
+
+
+        avg_b_score = sum(b_scores) / len(b_scores)
+        max_b_score = max(b_scores)
+        min_b_score = min(b_scores)
+        std_b_score = math.sqrt(sum((score - avg_b_score) ** 2 for score in b_scores) / len(b_scores))
+        wandb_logs[f"post_score_{mark}/avg_b_score"] += avg_b_score
+        wandb_logs[f"post_score_{mark}/max_b_score"] += max_b_score
+        wandb_logs[f"post_score_{mark}/min_b_score"] += min_b_score
+        wandb_logs[f"post_score_{mark}/std_b_score"] += std_b_score
+        wandb_logs[f"post_score_{mark}/avg_b_score_steps"] += 1
+        wandb_logs[f"post_score_{mark}/max_b_score_steps"] += 1
+        wandb_logs[f"post_score_{mark}/min_b_score_steps"] += 1
+        wandb_logs[f"post_score_{mark}/std_b_score_steps"] += 1
     print(f"tmax_score: {tmax_score}, tmin_score: {tmin_score}, mark: {mark}")
     print("----")
+
+
 
 
 class CompletionScorer:

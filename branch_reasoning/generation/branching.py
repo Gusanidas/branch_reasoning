@@ -4,7 +4,6 @@ import torch
 from collections import deque
 
 
-KEYWORD = "Assistant:"
 
 def create_keyword_regex(branching_factor=2):
     if not (2 <= branching_factor <= 9):
@@ -57,13 +56,10 @@ def get_new_branches_for_point(text: str, branch_number: int, branching_factor: 
     Returns:
         Modified text or None if branch not found.
     """
-    keyword_index = text.find(KEYWORD)
-    if keyword_index == -1:
-        return []
         
     keyword_regex = create_keyword_regex(branching_factor)
 
-    search_start_pos = keyword_index + len(KEYWORD)
+    search_start_pos = 0
     keyword_matches = list(keyword_regex.finditer(text, pos=search_start_pos))
     if branch_number <= 0 or branch_number > len(keyword_matches):
         return []
