@@ -4,13 +4,13 @@ from branch_reasoning.countdown_task import make_combined_countdown_tasks
 from datasets import load_dataset, concatenate_datasets
 import argparse
 
-VERY_EASY_EXAMPLES = 0
-EASY_EXAMPLES = 0
-MEDIUM_EXAMPLES = 150
-HARD_EXAMPLES = 300
-VERY_HARD_EXAMPLES = 150
+VERY_EASY_EXAMPLES = 8
+EASY_EXAMPLES = 128
+MEDIUM_EXAMPLES = 128
+HARD_EXAMPLES = 64
+VERY_HARD_EXAMPLES = 56
 
-HF_DATASET_REPO_ID = "Gusanidas/countdown-tasks-dataset-harder"
+HF_DATASET_REPO_ID = "Gusanidas/countdown-tasks-dataset-med-vl6"
 
 def main():
     """Generates the dataset and pushes it to Hugging Face Hub."""
@@ -46,6 +46,8 @@ def main():
             very_hard=VERY_HARD_EXAMPLES,
             shuffle_result=True
         )
+        # Add unique IDs to each example
+        new_dataset = new_dataset.add_column("id", list(range(len(new_dataset))))
         print(f"New dataset generated successfully with {len(new_dataset)} examples.")
     except Exception as e:
         print(f"Error during dataset generation: {e}")

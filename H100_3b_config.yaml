@@ -1,0 +1,69 @@
+generation:
+  total_completions: 1536
+  gen_batch_size: 256
+  no_completions: 8
+  branch_completions: false
+  branching_factor: 3
+  max_branching_points: 2
+  max_concurrent_requests: null
+  max_len: 1536
+  use_vllm: true
+  use_examples: true
+  temperature: 1.0
+  opt_generation_args:
+    top_p: 0.9
+model:
+  model_name: Qwen/Qwen2.5-Coder-3B-Instruct
+  tokenizer_name: Qwen/Qwen2.5-Coder-3B-Instruct
+  reference_model_name: Qwen/Qwen2.5-Coder-3B-Instruct
+  device: cuda
+  use_bfloat16: true
+training:
+  num_epochs: 2
+  epsilon_low: 0.1
+  epsilon_high: 0.1
+  max_grad_norm: 2.5
+  beta: 0.005
+  learning_rate: 5.0e-06
+  weight_decay: 1.0e-05
+  gradient_accumulation_steps: 128
+  max_gradient_accumulation_steps: 128
+  batch_size: 3
+  total_steps: 250
+  warmup_steps: 16
+  log_probs_batch_size: 4
+  full_last_epoch: false
+  max_grad_threshold: 22.0
+  clip_log_ratio_value: 4
+  optimizer_path: optimizer.pt
+  scheduler_path: scheduler.pt
+  use_torch_compile: false
+  use_gradient_checkpointing: false
+vllm_server:
+  tensor_parallel_size: 1
+  data_parallel_size: 2
+  gpu_memory_utilization: 0.8
+  max_model_len: 1536
+scoring:
+  normalize_by_prompt: BOTH
+  normalize_prompt_ratio: 0.8
+  normalize_all_branches: false
+  scoring_method: AVERAGE
+experiment:
+  save_interval: 1000
+  hf_repo_name: Gusanidas/branch-grpo-model-qwen-3b-branch3
+  hf_dataset_name: Gusanidas/countdown-tasks-dataset-med-vl6
+  iterations: 100
+  wandb_logging: true
+  wandb_project_name: branch_grpo_vast_branch_vllm
+  run_name: run_706
+  reuse_completions: false
+  reuse_completions_start_iter: 4
+  reuse_completions_batch_size: 24
+  reuse_completions_recent_batch_size: 24
+  model_dir: model
+  ref_model_dir: ref_model
+  data_path: completions.jsonl
+  training_log_path: training_logs.jsonl
+verbose: false
+iteration: 0

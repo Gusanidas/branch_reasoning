@@ -1,4 +1,5 @@
 import asyncio
+import random
 import time
 from dataclasses import dataclass
 import httpx
@@ -8,9 +9,11 @@ import socket
 import subprocess
 import sys
 import re
+import traceback
 import torch
 from typing import Any, IO, Optional, List, Dict, Union, Callable
 from transformers import PreTrainedTokenizer
+
 @dataclass
 class vLLM:
     client: AsyncOpenAI
@@ -46,6 +49,7 @@ async def start_vllm(
     named_arguments: Dict[str, Any] = {},
     timeout: float = 120.0,
     verbosity: int = 2,
+    local_rank: Optional[int] = None,
 ) -> vLLM:
     """
     Start a vLLM server as an async subprocess and return a vLLM client.
@@ -58,20 +62,18 @@ async def start_vllm(
         named_arguments: Additional arguments to pass to the vLLM server.
         timeout: Maximum time to wait for the server to start.
         verbosity: How verbose the output should be (0=silent, 1=minimal, 2=detailed).
+        local_rank: The local rank when running in distributed mode.
 
     Returns:
         A vLLM object with a client connected to the server.
     """
-    # Ensure we don't have stray vLLM processes
     t0 = time.time()
     kill_vllm_workers()
     
-    # Handle local model paths
     if os.path.exists(os.path.abspath(model)):
         named_arguments.setdefault("served_model_name", model)
         model = os.path.abspath(model)
     
-    # Find an available port
     port = named_arguments.get("port") or 8000
     while True:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -87,7 +89,6 @@ async def start_vllm(
     
     named_arguments["port"] = port
     
-    # Build the command line arguments
     args = [
         "vllm",
         "serve",
@@ -99,19 +100,56 @@ async def start_vllm(
         "--api-key=default",
     ]
     
-    # Start the vLLM process
+    vllm_env = {
+        **os.environ.copy(),
+        **(env or {}),
+    }
+    
+    # Check if we're in multi-GPU mode (tensor_parallel_size > 1)
+    tensor_parallel_size = named_arguments.get('tensor_parallel_size', 1)
+    
+    if tensor_parallel_size > 1:
+        # Multi-GPU mode: vLLM needs to see all GPUs
+        # Clear distributed environment variables but keep GPU visibility
+        distributed_vars = [
+            'RANK', 'LOCAL_RANK', 'WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT',
+            'LOCAL_WORLD_SIZE', 'TORCHELASTIC_RESTART_COUNT', 'TORCHELASTIC_MAX_RESTARTS',
+            'TORCHELASTIC_RUN_ID', 'NCCL_ASYNC_ERROR_HANDLING'
+        ]
+        for var in distributed_vars:
+            vllm_env.pop(var, None)
+        
+        cuda_devices = ','.join(str(i) for i in range(tensor_parallel_size))
+        vllm_env['CUDA_VISIBLE_DEVICES'] = cuda_devices
+        if verbosity > 0:
+            print(f"Setting CUDA_VISIBLE_DEVICES={cuda_devices} for tensor_parallel_size={tensor_parallel_size}")
+    else:
+        # Single GPU mode
+        distributed_vars = [
+            'RANK', 'LOCAL_RANK', 'WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT',
+            'LOCAL_WORLD_SIZE', 'TORCHELASTIC_RESTART_COUNT', 'TORCHELASTIC_MAX_RESTARTS',
+            'TORCHELASTIC_RUN_ID', 'NCCL_ASYNC_ERROR_HANDLING'
+        ]
+        for var in distributed_vars:
+            vllm_env.pop(var, None)
+        
+        # If running in distributed mode, explicitly set CUDA device for vLLM
+        if local_rank is not None:
+            vllm_env['CUDA_VISIBLE_DEVICES'] = str(local_rank)
+    
+    
     process = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={
-            **os.environ,
-            **(env or {}),
-        },
+        env=vllm_env,
+        start_new_session=True,  # Start in a new process group
     )
     
     if verbosity > 0:
         print(f"$ {' '.join(args)}")
+        if local_rank is not None:
+            print(f"  CUDA_VISIBLE_DEVICES={local_rank}")
     
     # Set up logging
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
@@ -172,26 +210,27 @@ async def start_vllm(
                 max_tokens=1,
             )
             break
-        except Exception:
+        except Exception as e:
             if asyncio.get_event_loop().time() - start > timeout:
+                # Print last few lines of log for debugging
+                if verbosity > 0:
+                    print(f"vLLM server failed to start. Last error: {e}")
                 process.terminate()
+                await process.wait()  # Wait for process to actually terminate
                 kill_vllm_workers()
-                raise TimeoutError("vLLM server did not start in time")
-            await asyncio.sleep(sleep_time)  # Add a small delay to prevent tight loops
-            sleep_time *= 1.1
+                raise TimeoutError(f"vLLM server did not start in time. Error: {e}")
+            await asyncio.sleep(sleep_time)
+            sleep_time = min(sleep_time * 1.1, 5.0)  # Cap max sleep time
             continue
     
     if logging:
         print(f"vLLM server started successfully. Logs can be found at {log_file}")
         logging = False
     
-    if max_concurrent_tokens is None and False:
-        print(f"In the last in")
-        process.terminate()
-        kill_vllm_workers()
-        raise RuntimeError(
-            "Max concurrent requests for the maximum model length not logged"
-        )
+    if max_concurrent_tokens is None:
+        # Don't fail if we can't prse this - it's not critical
+        print("Warning: max_concurrent_tokens is None, using default value of 1024")
+        max_concurrent_tokens = 1024  # Default value
     
     return vLLM(
         client,
@@ -224,27 +263,20 @@ async def vllm_generate_text(
     Returns:
         List of generated text completions
     """
-    # Set up generation parameters
+
     generation_params = {
         "max_tokens": generation_args.get("max_new_tokens", 512),
     }
-    
-    # Map parameters to OpenAI API format
     generation_params["temperature"] = temperature
     if "top_p" in generation_args:
         generation_params["top_p"] = generation_args["top_p"]
     
-    # Note: OpenAI API doesn't support top_k directly, we omit it for compatibility
-    # See OpenAI API docs: https://platform.openai.com/docs/api-reference/completions
     
-    # For OpenAI API compatibility
     generation_params["n"] = num_completions
-    # Add all generation_args to generation_params
     for key, value in generation_args.items():
         if key != "max_new_tokens":  # Already handled above
             generation_params[key] = value
     
-    # Create a semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(min(16, len(prompts)))
     
     async def generate_completion(prompt: str) -> List[str]:
@@ -318,7 +350,6 @@ async def vllm_chat_generate_text(
     Returns:
         List of generated text completions
     """
-    # Set up generation parameters
     generation_params = {
         "max_tokens": generation_args.get("max_new_tokens", max_seq_len),
     }
@@ -328,31 +359,29 @@ async def vllm_chat_generate_text(
     if "top_p" in generation_args:
         generation_params["top_p"] = generation_args["top_p"]
     
-    # Note: OpenAI API doesn't support top_k directly for chat completions
-    # See OpenAI API docs: https://platform.openai.com/docs/api-reference/chat/create
-    
-    # For OpenAI API compatibility
     generation_params["n"] = num_completions
     for key, value in generation_args.items():
         if key != "max_new_tokens" and key != "temperature" and key != "top_p":  # Already handled above
             generation_params[key] = value
     
-    # Create a semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(min(16, len(prompts)))
     
-    async def generate_chat_completion(prompt: str, assistant_messages: Optional[List[str]] = None) -> List[str]:
+    async def generate_chat_completion(prompt: str, assistant_message: Optional[str] = None) -> List[str]:
         async with semaphore:
             messages = [
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt}
             ]
-            if assistant_messages:
-                messages.extend([{"role": "assistant", "content": message} for message in assistant_messages])
-
+            extra_messages = {"add_generation_prompt":True}
+            add_generation_prompt = True
+            if assistant_message:
+                messages.extend([{"role": "assistant", "content": assistant_message}])
+                add_generation_prompt = False
+                extra_messages = {"continue_final_message":True}
             chat_text = tokenizer.apply_chat_template(
                 messages, 
                 tokenize=False, 
-                add_generation_prompt=True
+                **extra_messages
             )
             token_length = len(tokenizer.encode(chat_text))
             
@@ -360,32 +389,19 @@ async def vllm_chat_generate_text(
                 print(f"Token length {token_length} is greater than max_seq_len {max_seq_len}")
                 return [""]
             generation_params["max_tokens"] = max_seq_len-token_length
+            extra_parameters["add_generation_prompt"] = add_generation_prompt
+            extra_parameters["add_special_parameters"] = False
 
             
             try:
-                response = await vllm_instance.client.chat.completions.create(
+                response = await vllm_instance.client.completions.create(
                     model=vllm_instance.model,
-                    messages=messages,
+                    prompt=chat_text,
                     extra_body=extra_parameters,
                     **generation_params
                 )
-                return [choice.message.content for choice in response.choices]
+                return [choice.text for choice in response.choices]
             except Exception as e:
-                print(f"Error generating chat completion: {e}")
-                if "top_k" in str(e) and "top_k" in generation_args:
-                    print("Retrying without top_k parameter...")
-                    # If the error is related to top_k, retry without it
-                    retry_params = generation_params.copy()
-                    if "top_k" in retry_params:
-                        del retry_params["top_k"]
-                    
-                    response = await vllm_instance.client.chat.completions.create(
-                        model=vllm_instance.model,
-                        messages=messages,
-                        extra_body=extra_parameters,
-                        **retry_params
-                    )
-                    return [choice.message.content for choice in response.choices]
                 raise
     
     # Gather all completion tasks
@@ -394,7 +410,7 @@ async def vllm_chat_generate_text(
         assistant_messages = [None] * len(prompts)
     if len(bare_prompts) == 0:
         bare_prompts = [None] * len(prompts)
-    tasks = [generate_chat_completion(prompt, assistant_messages) for prompt, assistant_messages in zip(prompts, assistant_messages)]
+    tasks = [generate_chat_completion(prompt, assistant_message) for prompt, assistant_message in zip(prompts, assistant_messages)]
     
     for completed_task in await asyncio.gather(*tasks):
         all_generated_texts.extend(completed_task)
@@ -415,6 +431,5 @@ async def stop_vllm(vllm_instance: vLLM) -> None:
             await vllm_instance.process.wait()
         except Exception:
             pass
-    
-    # Make sure all worker processes are terminated
+
     kill_vllm_workers()

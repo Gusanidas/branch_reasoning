@@ -1,14 +1,26 @@
-from typing import List, Dict, Any, Union, Optional, Tuple, NamedTuple, Iterator
+from typing import (
+    List,
+    Dict,
+    Any,
+    Union,
+    Optional,
+    Tuple,
+    NamedTuple,
+    Iterator,
+)
+
+import traceback
 import time
 import html
 import wandb
 import torch
 import os
-from transformers import PreTrainedTokenizer
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 from collections import defaultdict
 from dataclasses import dataclass
 import itertools
 import asyncio
+from omegaconf import DictKeyType
 
 from branch_reasoning.generation.branching import QueueDataset, get_new_branches
 from branch_reasoning.generation.vllm_generation import (
@@ -17,7 +29,7 @@ from branch_reasoning.generation.vllm_generation import (
     vllm_chat_generate_text,
     start_vllm,
     stop_vllm,
-    kill_vllm_workers
+    kill_vllm_workers,
 )
 from branch_reasoning.generation.completions import (
     Branch,
@@ -28,7 +40,7 @@ from branch_reasoning.generation.completions import (
     _calculate_batch_parameters,
     _fetch_batch,
     _log_statistics,
-    _pack_into_return_datatypes
+    _pack_into_return_datatypes,
 )
 
 
@@ -58,54 +70,66 @@ async def _perform_vllm_branching(
         max_seq_len=max_len - 5,
     )
     queue_dataset.add_sequences(new_branches.items())
-    
+
     while not queue_dataset.is_empty():
         keys, batch = queue_dataset.next_batch()
-        
+        prompts, prev_completions = zip(*batch)
+
         completions = await vllm_chat_generate_text(
             vllm_instance,
             tokenizer,
-            batch,
+            prompts,
             num_completions=1,
             max_seq_len=max_len,
             generation_args=generation_args,
             temperature=temperature,
+            assistant_messages=prev_completions,
         )
-        
+
         new_completions = {}
-        for key, completion in zip(keys, completions):
-            new_completions[key] = completion
-        
-        all_completions.update(new_completions)
+        for key, completion, prev_completion, prompt in zip(
+            keys, completions, prev_completions, prompts
+        ):
+            new_completions[key] = (prompt, prev_completion + completion)
+
+        all_completions.update({k: v[1] for k, v in new_completions.items()})
         new_branches = get_new_branches(
             new_completions,
             branching_factor=branching_factor,
             max_branching_points=max_branching_points,
         )
         queue_dataset.add_sequences(new_branches.items())
-    
-    return all_completions
+
+    # all_completions = {k: v[1] for k, v in all_completions.items()}
+    new_all_completions = {}
+    for k, v in all_completions.items():
+        if isinstance(v, tuple):
+            new_all_completions[k] = v[1]
+        else:
+            new_all_completions[k] = v
+
+    return new_all_completions
 
 
 async def vllm_generate_completions(
-    model,
-    tokenizer: PreTrainedTokenizer,
+    tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
     dataset: itertools.cycle,
     total_completions: int,
     completions_per_prompt: int,
     gen_batch_size: int,
     current_iter: int,
     max_len: int,
-    model_name: str = None,
-    checkpoint_dir: str = "./checkpoints",
-    vllm_server_args: Optional[Dict[str, Any]] = None,
-    log_file: str = None,
+    model_dir: str = "./model",
+    vllm_server_args: Optional[Dict[DictKeyType, Any]] = None,
+    log_file: Optional[str] = None,
     wandb_logging: bool = True,
     branch_completions: bool = True,
     branching_factor: int = 2,
     max_branching_points: int = 3,
     generation_args: dict = {},
     temperature: float = 1.0,
+    max_concurrent_requests: Optional[int] = None,
+    verbose: bool = True,
 ) -> List[PromptCompletion]:
     """
     Generate completions using vLLM for the given dataset.
@@ -120,19 +144,12 @@ async def vllm_generate_completions(
     """
     t0 = time.time()
     vllm_instance = None
+    print(f"type of vllm_server_args = {type(vllm_server_args)}")
 
     try:
-        # First, save the model and tokenizer to disk
-        os.makedirs(checkpoint_dir, exist_ok=True)
 
-        print(f"Saving model and tokenizer to {checkpoint_dir}...")
-        model_save_time = time.time()
-        model.save_pretrained(checkpoint_dir)
-        tokenizer.save_pretrained(checkpoint_dir)
-        print(f"Model and tokenizer saved successfully in {time.time() - model_save_time:.2f}s")
-
-        # Use the checkpoint directory as the model path for vLLM
-        model_path = checkpoint_dir
+        # Use the model directory as the model path for vLLM
+        model_path = model_dir
 
         # Set up log file
         if log_file is None:
@@ -151,7 +168,9 @@ async def vllm_generate_completions(
 
         # Add a dynamic port to avoid conflicts - use iteration and current time to generate a port number
         # This ensures that each run gets a unique port
-        vllm_server_args = vllm_server_args.copy()  # Create a copy to avoid modifying the original
+        vllm_server_args = (
+            vllm_server_args.copy()
+        )  # Create a copy to avoid modifying the original
 
         # Generate a port number based on current iteration and time - in range 10000-65000
         # Using both time and iteration ensures uniqueness even if multiple runs start at the same time
@@ -165,36 +184,52 @@ async def vllm_generate_completions(
 
         vllm_server_args["port"] = dynamic_port
 
-        print(f"Starting vLLM server with model from {model_path} on port {dynamic_port}...")
+        print(
+            f"Starting vLLM server with model from {model_path} on port {dynamic_port}..."
+        )
 
         # Kill any lingering processes first
+        print(f"Killing any lingering processes")
         kill_vllm_workers()
         await asyncio.sleep(1)  # Wait a bit for resources to be released
+        print(f"Killed any lingering processes")
 
         # Try up to 3 different ports if there's an issue
         max_attempts = 3
+        verbosity = 2 if verbose else 0
         for attempt in range(max_attempts):
             try:
+                if max_concurrent_requests is None:
+                    max_concurrent_requests = gen_batch_size * 2
                 vllm_instance = await start_vllm(
                     model=model_path,
                     log_file=log_file,
-                    max_concurrent_requests=gen_batch_size*2,
+                    max_concurrent_requests=max_concurrent_requests,
                     named_arguments=vllm_server_args,
-                    verbosity=2,
+                    verbosity=verbosity,
                     timeout=300.0,  # 5 minutes timeout for server startup
                 )
-                print(f"vLLM server started successfully on port {vllm_server_args['port']}!")
+                print(
+                    f"vLLM server started successfully on port {vllm_server_args['port']}!"
+                )
+                print("************************************************")
                 break  # Success, exit the loop
             except RuntimeError as e:
                 if "is already in use" in str(e) and attempt < max_attempts - 1:
-                    print(f"Port {vllm_server_args['port']} is already in use, trying another port...")
+                    print(
+                        f"Port {vllm_server_args['port']} is already in use, trying another port..."
+                    )
                     # Try a different port by adding 1000
                     vllm_server_args["port"] += 1000
                     if vllm_server_args["port"] > 65000:
-                        vllm_server_args["port"] = vllm_server_args["port"] % 55000 + 10000
+                        vllm_server_args["port"] = (
+                            vllm_server_args["port"] % 55000 + 10000
+                        )
                     # Kill any processes on the previous port
                     kill_vllm_workers()
-                    await asyncio.sleep(2)  # Give more time for resources to be released
+                    await asyncio.sleep(
+                        2
+                    )  # Give more time for resources to be released
                 else:
                     raise  # Re-raise the exception if we've run out of attempts
         print("vLLM server started successfully!")
@@ -216,13 +251,13 @@ async def vllm_generate_completions(
         all_targets = {}
         all_tags = {}
         all_solutions = {}
-
+        all_ids = {}
         total_keys = 0
 
         # Generate completions
         for i in range(generation_iter):
-            prompts, numbers, targets, tags, solutions, bare_prompts = _fetch_batch(
-                dataset, prompts_per_batch
+            prompts, numbers, targets, tags, solutions, bare_prompts, ids = (
+                _fetch_batch(dataset, prompts_per_batch)
             )
 
             for j in range(prompt_repetitions):
@@ -243,7 +278,9 @@ async def vllm_generate_completions(
                     example_completion_html = wandb.Html(
                         f"<pre>{html.escape(example_completion)}</pre>"
                     )
-                    example_completion_text = wandb.Html(f"```\n{example_completion}\n```")
+                    example_completion_text = wandb.Html(
+                        f"```\n{example_completion}\n```"
+                    )
 
                 for k in range(prompts_per_batch):
                     total_keys += 1
@@ -254,14 +291,15 @@ async def vllm_generate_completions(
                     all_targets[base_key] = targets[k]
                     all_tags[base_key] = tags[k]
                     all_solutions[base_key] = solutions[k]
-
+                    all_ids[base_key] = ids[k]
                     for kk in range(num_completions):
                         completion_key = f"{base_key}_{kk}_" + "_".join(
                             ["0"] * max_branching_points
                         )
-                        all_completions[completion_key] = completions[
-                            k * num_completions + kk
-                        ]
+                        all_completions[completion_key] = (
+                            prompts[k],
+                            completions[k * num_completions + kk],
+                        )
 
         original_no_branches = len(all_completions)
         if branch_completions:
@@ -276,6 +314,14 @@ async def vllm_generate_completions(
                 generation_args,
                 temperature,
             )
+
+        new_all_completions = {}
+        for k, v in all_completions.items():
+            if isinstance(v, tuple):
+                new_all_completions[k] = v[1]
+            else:
+                new_all_completions[k] = v
+        all_completions = new_all_completions
 
         if wandb_logging:
             _log_statistics(
@@ -295,6 +341,7 @@ async def vllm_generate_completions(
             all_tags,
             all_solutions,
             all_bare_prompts,
+            all_ids,
         )
 
         print(f"Generation Time taken: {time.time() - t0} seconds")
@@ -302,6 +349,7 @@ async def vllm_generate_completions(
 
     except Exception as e:
         print(f"Error in vllm_generate_completions: {e}")
+        print(traceback.format_exc())
         raise
 
     finally:
@@ -320,6 +368,7 @@ async def vllm_generate_completions(
                 if used_port:
                     try:
                         import subprocess
+
                         # Find and kill processes using the port
                         cmd = f"lsof -ti:{used_port} | xargs kill -9"
                         subprocess.run(
@@ -327,11 +376,13 @@ async def vllm_generate_completions(
                             shell=True,
                             check=False,
                             stderr=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL
+                            stdout=subprocess.DEVNULL,
                         )
                         print(f"Killed any processes using port {used_port}")
                     except Exception as port_error:
-                        print(f"Error killing processes on port {used_port}: {port_error}")
+                        print(
+                            f"Error killing processes on port {used_port}: {port_error}"
+                        )
             except Exception as e:
                 print(f"Error stopping vLLM server: {e}")
             finally:

@@ -2,10 +2,11 @@ from typing import List, Dict, Any, Union, Optional, Tuple, NamedTuple, Iterator
 import html
 import wandb
 import torch
-from transformers import PreTrainedModel, PreTrainedTokenizer
+from transformers import PreTrainedModel, PreTrainedTokenizer, PreTrainedTokenizerFast
 from collections import defaultdict
 from dataclasses import dataclass
 import itertools
+
 
 from branch_reasoning.generation.text_generation import hf_generate_text
 from branch_reasoning.generation.branching import QueueDataset, get_new_branches
@@ -17,6 +18,8 @@ class Branch:
     log_probs: Optional[torch.Tensor]
     ref_log_probs: Optional[torch.Tensor]
     score: Optional[float]
+    key: str
+    meta_scores: Dict[str, float]
 
 
 @dataclass
@@ -42,13 +45,17 @@ class PromptCompletion:
     metadata: Metadata
     branched_completions: List[BranchedCompletion]
     bare_prompt: Optional[str] = None
+    problem_id: Optional[int] = None
 
 
 def _calculate_batch_parameters(
     completions_per_prompt: int, gen_batch_size: int, total_completions: int
 ) -> Tuple[int, int, int, int]:
 
-    if completions_per_prompt % gen_batch_size != 0 and gen_batch_size % completions_per_prompt != 0:
+    if (
+        completions_per_prompt % gen_batch_size != 0
+        and gen_batch_size % completions_per_prompt != 0
+    ):
         raise ValueError(
             "completions_per_prompt must be divisible by gen_batch_size or gen_batch_size must be divisible by completions_per_prompt"
         )
@@ -60,10 +67,10 @@ def _calculate_batch_parameters(
         prompt_repetitions = 1
         prompts_per_batch = gen_batch_size // completions_per_prompt
 
-    if total_completions % (gen_batch_size * prompt_repetitions) != 0:
-        raise ValueError(
-            "total_completions must be divisible by gen_batch_size * prompt_repetitions"
-        )
+    # if total_completions % (gen_batch_size * prompt_repetitions) != 0:
+    #    raise ValueError(
+    #        "total_completions must be divisible by gen_batch_size * prompt_repetitions"
+    #    )
 
     generation_iter = total_completions // (gen_batch_size * prompt_repetitions)
     num_completions = min(completions_per_prompt, gen_batch_size)
@@ -80,6 +87,7 @@ def _fetch_batch(
     tags = []
     solutions = []
     bare_prompts = []
+    ids = []
     for _ in range(prompts_per_batch):
         item = next(dataset)
         prompts.append(item["question"])
@@ -88,7 +96,8 @@ def _fetch_batch(
         tags.append(item["tag"])
         solutions.append(item["solution"])
         bare_prompts.append(item.get("bare_question", None))
-    return prompts, numbers, targets, tags, solutions, bare_prompts
+        ids.append(item.get("id", None))
+    return prompts, numbers, targets, tags, solutions, bare_prompts, ids
 
 
 def _perform_branching(
@@ -101,7 +110,10 @@ def _perform_branching(
     max_len: int,
     device: Optional[str] = None,
     generation_args: Dict[str, Any] = {},
+    temperature: float = 1.0,
+    cache_file: Optional[str] = None,
 ) -> Dict[str, str]:
+    print(f"In _perform_branching, all_completions: {len(all_completions)}")
     new_branches = get_new_branches(
         all_completions,
         branching_factor=branching_factor,
@@ -115,21 +127,28 @@ def _perform_branching(
     )
     queue_dataset.add_sequences(new_branches.items())
     while not queue_dataset.is_empty():
+        print(f"In _perform_branching, queue_dataset is not empty")
         keys, batch = queue_dataset.next_batch()
+        prompts, prev_completions = zip(*batch)
 
         completions = hf_generate_text(
             model,
             tokenizer,
-            batch,
+            prompts,
             num_completions=1,
             max_seq_len=max_len,
             device=device,
             generation_args=generation_args,
+            temperature=temperature,
+            assistant_messages=prev_completions,
+            cache_file=cache_file,
         )
 
         new_completions = {}
-        for key, completion in zip(keys, completions):
-            new_completions[key] = completion
+        for key, completion, prev_completion, prompt in zip(
+            keys, completions, prev_completions, prompts
+        ):
+            new_completions[key] = (prompt, prev_completion + completion)
 
         all_completions.update(new_completions)
         new_branches = get_new_branches(
@@ -138,7 +157,16 @@ def _perform_branching(
             max_branching_points=max_branching_points,
         )
         queue_dataset.add_sequences(new_branches.items())
-    return all_completions
+
+    # Convert tuples to just completions for compatibility
+    new_all_completions = {}
+    for k, v in all_completions.items():
+        if isinstance(v, tuple):
+            new_all_completions[k] = v[1]
+        else:
+            new_all_completions[k] = v
+
+    return new_all_completions
 
 
 def _log_statistics(
@@ -146,8 +174,9 @@ def _log_statistics(
     original_no_branches: int,
     current_iter: int,
     example_completion_html: wandb.Html,
-    example_completion_text: wandb.Html = None, #TODO: Remove this
+    example_completion_text: wandb.Html = None,  # TODO: Remove this
 ) -> None:
+    print(f"In _log_statistics, all_completions: {len(all_completions)}")
     branch_ratio = len(all_completions) / original_no_branches
     keys, completions = zip(*all_completions.items())
     total_completion_length = sum(len(c) for c in completions)
@@ -177,6 +206,7 @@ def _pack_into_return_datatypes(
     all_tags: Dict[str, str],
     all_solutions: Dict[str, str],
     all_bare_prompts: Dict[str, str] = {},
+    all_ids: Dict[str, int] = {},
 ) -> List[PromptCompletion]:
     branched_completions = dict()
     for k, v in all_completions.items():
@@ -185,7 +215,14 @@ def _pack_into_return_datatypes(
         branched_completions[gen_key] = branched_completions.get(
             gen_key, BranchedCompletion(branches=[], score=None)
         )
-        branch = Branch(completion=v, log_probs=None, ref_log_probs=None, score=None)
+        branch = Branch(
+            completion=v,
+            log_probs=None,
+            ref_log_probs=None,
+            score=None,
+            key=k,
+            meta_scores=defaultdict(float),
+        )
         branched_completions[gen_key].branches.append(branch)
 
     prompt_completions = dict()
@@ -198,6 +235,7 @@ def _pack_into_return_datatypes(
         target = all_targets[base_key]
         solution = all_solutions[base_key]
         tag = all_tags[base_key]
+        id = all_ids.get(base_key, None)
         prompt_completions[base_key] = prompt_completions.get(
             base_key,
             PromptCompletion(
@@ -206,6 +244,7 @@ def _pack_into_return_datatypes(
                 scoring_data=ScoringData(nums=numbers, target=target),
                 metadata=Metadata(solution=solution, tag=tag),
                 branched_completions=[],
+                problem_id=id,
             ),
         )
         prompt_completions[base_key].branched_completions.append(v)
@@ -215,7 +254,7 @@ def _pack_into_return_datatypes(
 
 def generate_completions(
     model: PreTrainedModel,
-    tokenizer: PreTrainedTokenizer,
+    tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
     dataset: itertools.cycle,
     total_completions: int,
     completions_per_prompt: int,
@@ -229,6 +268,7 @@ def generate_completions(
     max_branching_points: int = 3,
     generation_args: dict = {},
     temperature: float = 1.0,
+    cache_file: Optional[str] = None,
 ) -> List[PromptCompletion]:
     """
     Generate completions for the given dataset.
@@ -242,7 +282,9 @@ def generate_completions(
     ) = _calculate_batch_parameters(
         completions_per_prompt, gen_batch_size, total_completions
     )
-    print(f"Generation iter: {generation_iter}")
+    print(
+        f"Generation iter: {generation_iter}, prompt_repetitions: {prompt_repetitions}, prompts_per_batch: {prompts_per_batch}, num_completions: {num_completions}"
+    )
     all_completions = {}
     all_prompts = {}
     all_bare_prompts = {}
@@ -250,11 +292,12 @@ def generate_completions(
     all_targets = {}
     all_tags = {}
     all_solutions = {}
+    all_ids = {}
 
     total_keys = 0
 
     for i in range(generation_iter):
-        prompts, numbers, targets, tags, solutions, bare_prompts = _fetch_batch(
+        prompts, numbers, targets, tags, solutions, bare_prompts, ids = _fetch_batch(
             dataset, prompts_per_batch
         )
         for j in range(prompt_repetitions):
@@ -267,8 +310,11 @@ def generate_completions(
                 device=device,
                 generation_args=generation_args,
                 temperature=temperature,
+                cache_file=cache_file,
             )
-            print(f"length of completions: {len(completions)}, len of prompts: {len(prompts)}")
+            print(
+                f"length of completions: {len(completions)}, len of prompts: {len(prompts)}"
+            )
             if wandb_logging and j == 0:  # TODO: Remove one of the two.
                 example_completion_html = wandb.Html(
                     f"<pre>{html.escape(prompts[0] + completions[0])}</pre>"
@@ -283,13 +329,15 @@ def generate_completions(
                 all_targets[base_key] = targets[k]
                 all_tags[base_key] = tags[k]
                 all_solutions[base_key] = solutions[k]
+                all_ids[base_key] = ids[k]
                 for kk in range(num_completions):
                     completion_key = f"{base_key}_{kk}_" + "_".join(
                         ["0"] * max_branching_points
                     )
-                    all_completions[completion_key] = completions[
-                        k * num_completions + kk
-                    ]
+                    all_completions[completion_key] = (
+                        prompts[k],
+                        completions[k * num_completions + kk],
+                    )
             print(f"Completions added to all_completions")
     original_no_branches = len(all_completions)
     if branch_completions:
@@ -303,7 +351,18 @@ def generate_completions(
             max_len,
             device,
             generation_args,
+            temperature,
+            cache_file,
         )
+    else:
+        # If not branching, still need to convert tuples to strings
+        new_all_completions = {}
+        for k, v in all_completions.items():
+            if isinstance(v, tuple):
+                new_all_completions[k] = v[1]
+            else:
+                new_all_completions[k] = v
+        all_completions = new_all_completions
 
     if wandb_logging:
         _log_statistics(
@@ -322,6 +381,7 @@ def generate_completions(
         all_tags,
         all_solutions,
         all_bare_prompts,
+        all_ids,
     )
 
 

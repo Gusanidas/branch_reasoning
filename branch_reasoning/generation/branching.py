@@ -1,5 +1,5 @@
 import re
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Union
 import torch
 from collections import deque
 
@@ -73,7 +73,8 @@ def get_new_branches_for_point(text: str, branch_number: int, branching_factor: 
     keyword_start, keyword_end = keyword_match.start(), keyword_match.end()
     possible_branch = text[last_end:keyword_end]
     think_end = text.find("</think>", search_start_pos)
-    if think_end < keyword_start and think_end > 0:
+    think_start = text.find("<think>", search_start_pos)
+    if think_end < keyword_start or think_start > keyword_end:
         return []
     prefix = text[:keyword_start]
     keywords = [f"#{chr(97 + i)}#" for i in range(branching_factor)]
@@ -86,7 +87,7 @@ def get_new_branches_for_point(text: str, branch_number: int, branching_factor: 
             return r
     return []
 
-def get_new_branches(all_completions: Dict[str, str], branching_factor: int = 2, max_branching_points: int = 3) -> Dict[str, str]:
+def get_new_branches(all_completions: Dict[str, Tuple[str, str]], branching_factor: int = 2, max_branching_points: int = 3) -> Dict[str, Tuple[str, str]]:
     """
     Process the dictionary of completions and generate new branches.
     
@@ -99,7 +100,7 @@ def get_new_branches(all_completions: Dict[str, str], branching_factor: int = 2,
     """
     new_branches = {}
     
-    for key, completion in all_completions.items():
+    for key, (prompt, completion) in all_completions.items():
         parts = key.split("_")
         if len(parts) < 3:
             continue
@@ -118,7 +119,7 @@ def get_new_branches(all_completions: Dict[str, str], branching_factor: int = 2,
                 for j, new_branch in enumerate(new_branches_for_point):
                     branches_copy[i] = str(j+1)
                     new_key = f"{base_key}_{iter_num}_{'_'.join(branches_copy)}"
-                    new_branches[new_key] = new_branch
+                    new_branches[new_key] = (prompt, new_branch)
             else:
                 # Skip if branch is already ">0"
                 break
@@ -138,20 +139,29 @@ class QueueDataset:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
     
-    def add_sequences(self, sequences: List[Tuple[str, str]]):
+    def add_sequences(self, sequences: List[Tuple[str, Union[str, Tuple[str, str]]]]):
         """
         Add sequences to the dataset.
         
         Args:
-            sequences (List[Tuple[str, torch.Tensor]]): A list of (key, tensor) pairs.
+            sequences (List[Tuple[str, Union[str, Tuple[str, str]]]]): A list of (key, value) pairs.
                 The key is a string identifier for the sequence.
-                The tensor is a 1D PyTorch tensor of token IDs.
+                The value can be either a string (completion) or a tuple (prompt, completion).
         """
-        for key, completion in sequences:
+        for key, value in sequences:
+            # Handle both string and tuple formats
+            if isinstance(value, tuple):
+                prompt, completion = value
+            else:
+                completion = value
+                prompt = None  # For backward compatibility
+            
             tokens = self.tokenizer.encode(completion, add_special_tokens=False)
             if len(tokens) > self.max_seq_len:
                 tokens = tokens[:self.max_seq_len-3] + tokens[-3:]
-            self.queue.append((key, completion))
+            
+            # Store the full value (either string or tuple)
+            self.queue.append((key, value))
     
     def next_batch(self) -> Optional[Tuple[List[str], torch.Tensor, torch.Tensor]]:
         """

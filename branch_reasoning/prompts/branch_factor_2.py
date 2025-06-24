@@ -235,6 +235,63 @@ That is exactly our target!
 I have found the solution: 7 * 12 + 2 * 20 + 9 * 5 = 169.
 <answer>7 * 12 + 2 * 20 + 9 * 5</answer>""",3)
 
+example_10 = ("""
+Numbers: 23,49, 5, 85, 26
+Target: 41
+<think>
+Branching out.
+<a>23 + 49</a> <b>23 + 5</b>
+#a#
+
+23 + 49 = 72
+<a>85-72 = 13</a> <b>72 - 26 = 46</b>
+#b#
+
+So, 23 + 49 - 26 = 41.
+
+46 - 5 = 41
+</think>
+I have found the solution: 23 + 49 - 26 - 5 = 41.
+<answer>23 + 49 - 26 - 5</answer>
+""",2)
+
+
+example_11 = ("""
+Numbers: 23,49, 5, 85, 26
+Target: 82
+<think>
+Branching out.
+<a>26 + 49 = 75</a> <b>26 - 23 = 3</b>
+#b#
+
+85 - 3 = 82.
+
+</think>
+I have found the solution: 85 + 26 - 23 = 82.
+<answer>85 + 26 - 23</answer>
+""",1)
+
+example_12 = ("""
+Numbers: 20, 44, 50, 10, 12, 18
+Target: 92
+<think>
+Branching out.
+<a>20 + 44</a> <b>20 + 50</b>
+#a#
+
+20 + 44 = 64
+<a>64 + 10 = 74</a> <b>64 + 12 = 76</b>
+#a#
+
+74 + 12 = 86
+74 + 18 = 92.
+
+20 + 44 + 10 + 18 = 92.
+</think>
+I have found the solution: 20 + 44 + 10 + 12 + 18 = 92.
+<answer>20 + 44 + 10 + 12 + 18</answer>""",2)
+
+
 no_branches_example_1 = ("""
 Numbers: 3, 5, 7
 Target: 22
@@ -264,9 +321,10 @@ I have found the solution: 4 * 5 = 20.
 <answer>4 * 5</answer>""", 0)
 
 
-examples = [example_1, example_2, example_3, example_4, example_5, example_6, example_7, example_8, no_branches_example_1, no_branches_example_2]
-double_examples = [(e1 + "\nExample:\n" + e2, max(m1, m2)) for e1, m1 in examples for e2, m2 in examples]
-examples = examples + double_examples
+examples = [example_1, example_2, example_3, example_4, example_5, example_6, example_7, example_8, example_10, example_11, example_12, no_branches_example_1, no_branches_example_2]
+short_examples = [example_1, example_7, example_8, example_10, example_11, example_12, no_branches_example_1]
+double_examples = [(e1 + "\nExample:\n" + e2, max(m1, m2)) for e1, m1 in short_examples for e2, m2 in short_examples]
+examples = examples + double_examples + examples
 def get_format_and_examples(max_branching_points):
     filtered_examples = [example for example, branching_points in examples if branching_points <= max_branching_points]
     return multi_branch_format_prompt.format(max_branching_points=max_branching_points), filtered_examples

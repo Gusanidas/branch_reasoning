@@ -69,7 +69,7 @@ example_3 = ("""
 Numbers: 7, 12, 2, 20, 5, 1
 Target: 125
 <think>
-Branching out.
+Some starting options.
 <a>
 7*20 = 140.
 </a>
@@ -262,6 +262,89 @@ That is the solution.
 I have found the solution: 7*5*2 - 3 = 67.
 <answer>7*5*2 - 3</answer>
 """, 1)
+
+example_10 = ("""
+Numbers: 23,49, 5, 85, 26
+Target: 41
+<think>
+<a>85- 49</a> <b>23 + 5</b><c> 23 + 49</c><d>85 - 26</d>
+#c#
+
+23 + 49 = 72
+<a>85-72 = 13</a> <b>72 - 26 = 46</b><c>72-5 = 67</c><d>72 + 5 = 77</d>
+#b#
+
+So, 23 + 49 - 26 = 41.
+
+46 - 5 = 41
+</think>
+I have found the solution: 23 + 49 - 26 - 5 = 41.
+<answer>23 + 49 - 26 - 5</answer>
+""",2)
+
+
+example_11 = ("""
+Numbers: 23,49, 5, 85, 26
+Target: 82
+<think>
+<a>26 + 49 = 75</a> <b>26 - 5 = 21</b><c>26 + 5 = 31</c><d>26 - 23 = 3</d>
+#d#
+
+26-23 = 3
+85 - 3 = 82.
+
+</think>
+I have found the solution: 85 + 26 - 23 = 82.
+<answer>85 + 26 - 23</answer>
+""",1)
+
+example_12 = ("""
+Numbers: 20, 44, 50, 10, 12, 18
+Target: 92
+<think>
+I will branch early and explore each path separately.
+<a>20 + 10</a> <b>20 + 50</b><c>20 + 44</c><d>20 + 12</d>
+#c#
+
+20 + 44 = 64
+<a>64 + 10 = 74</a> <b>64 + 12 = 76</b><c>64 + 18 = 82</c><d>64 -50 + 10 = 24</d>
+#a#
+
+74 + 12 = 86
+74 + 18 = 92.
+
+20 + 44 + 10 + 18 = 92.
+</think>
+I have found the solution: 20 + 44 + 10 + 12 + 18 = 92.
+<answer>20 + 44 + 10 + 12 + 18</answer>""",2)
+
+no_branches_example_1 = ("""
+Numbers: 3, 5, 7
+Target: 22
+<think>
+I will try to multiply 5 and 7, that is 5 * 7 = 35. Minus 3 that is 32, which is too much.
+</think>
+I can try adding all the numbers. 3 + 5 + 7 = 15, it is too low.
+I can multiply 3 and 5, that is 3 * 5 = 15. I can add 7, that is 15 + 7 = 22.
+That is the solution.
+</think>
+
+I have found the solution: 3*5 + 7 = 22.
+<answer>3 * 5 + 7</answer>""", 0)
+
+no_branches_example_2 = ("""
+Numbers: 4, 5, 9
+Target: 20
+<think>
+First, I'll try adding all numbers together: 4 + 5 + 9 = 18. This is close but still 2 less than our target.
+I could try multiplication. 4 * 5 = 20, which is exactly our target! Great, I found a solution.
+Let me check if there are other solutions.
+I could try 5 * 9 = 45, and then subtract 4: 45 - 4 = 41. That's too large.
+Another option would be 4 * 9 = 36, and then subtract 5: 36 - 5 = 31. Also too large.
+So the best solution is 4 * 5 = 20.
+</think>
+I have found the solution: 4 * 5 = 20.
+<answer>4 * 5</answer>""", 0)
 
 
 examples = [example_1, example_2, example_3, example_4, example_5, example_6, example_7]
